@@ -1,0 +1,156 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Drawing;
+
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+using IronOcr;
+using Emgu.CV;
+using Emgu.CV.Structure;
+using Emgu.CV.CvEnum;
+using Emgu.CV.Util;
+using OpenCvSharp;
+using System.Windows.Media.Effects;
+using OpenTK;
+using System.Windows.Media.Imaging;
+using System.Drawing.Imaging;
+
+
+namespace Plaka_Tanıma
+{
+    public partial class Form1 : Form
+    {
+        Image<Bgr, byte> imgInput;
+        Image<Bgr, byte> imgplaka;
+        Image<Gray, byte> imgplakaGri;
+        Image<Bgr, byte> imgplakaThresh;
+        Image<Gray, byte> imgplakaBin;
+        Image<Bgr, byte> imgCopy;
+        Image<Gray, byte> imgGray;
+        Image<Gray, byte> imgBinarize;
+        public Form1()
+        {
+            InitializeComponent();
+        }
+        Bitmap image = new Bitmap("bosresm.png");
+        public void dosyasec(object sender, EventArgs e)
+        {
+            OpenFileDialog file = new OpenFileDialog();
+            if (file.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+            {
+                imgInput = new Image<Bgr, byte>(file.FileName);
+                imgCopy = new Image<Bgr, byte>(file.FileName);
+                picB_OrjResim.Image = imgInput.Bitmap;
+            }
+
+        }
+        public static Bitmap CropImage(Image source, int x, int y, int width, int height)
+        {
+            Rectangle crop = new Rectangle(x, y, width, height);
+
+            var bmp = new Bitmap(crop.Width, crop.Height);
+            using (var gr = Graphics.FromImage(bmp))
+            {
+                gr.DrawImage(source, new Rectangle(0, 0, bmp.Width, bmp.Height), crop, GraphicsUnit.Pixel);
+            }
+            return bmp;
+        }
+
+        private void plakayiOku(object sender, EventArgs e)
+        {
+
+
+
+            //Gri yapma
+            imgGray = imgInput.Convert<Gray, byte>();
+            
+
+
+            //bulanıklaştırma
+            imgGray = imgGray.SmoothBlur(6, 6);
+
+
+            //Binarize - threshold
+            imgBinarize = new Image<Gray, byte>(imgGray.Width, imgGray.Height, new Gray(0));
+            CvInvoke.Threshold(imgGray, imgBinarize, 100, 255, Emgu.CV.CvEnum.ThresholdType.Otsu);
+            
+
+
+            //kenar tespiti
+            Image<Gray, byte> imgCanny = new Image<Gray, byte>(imgBinarize.Width, imgBinarize.Height, new Gray(0));
+            imgCanny = imgBinarize.Canny(50, 100);
+
+
+
+            //kontur bulma ve kontor çizimi. çizim copy üzerine yapıldı
+            Emgu.CV.Util.VectorOfVectorOfPoint contours = new Emgu.CV.Util.VectorOfVectorOfPoint();
+            Mat hier = new Mat();
+            CvInvoke.FindContours(imgBinarize, contours, hier, RetrType.External, ChainApproxMethod.ChainApproxSimple);  //kontor alımı
+
+
+
+            //kontor sıralaması
+            Dictionary<int, double> dict = new Dictionary<int, double>();
+            if (contours.Size > 0) //içinde en az 1 contour var demek
+            {
+                for (int i = 0; i < contours.Size; i++)
+                {
+                    double area = CvInvoke.ContourArea(contours[i]);
+                    dict.Add(i, area);
+
+                }
+            }
+
+            int x, y, w, h;
+
+            var item = dict.OrderByDescending(v => v.Value).Take(10); //dict sıralandı büyükten küçüğe
+
+            foreach (var it in item)
+            {
+                int key = int.Parse(it.Key.ToString());
+                Rectangle rect = CvInvoke.BoundingRectangle(contours[key]);
+                double k = rect.Width / rect.Height;
+
+                
+               
+
+                if (k > 3.9 && k < 4.5)//Yalnızca plaka standartlarına uyan fotoğraflar girebilir
+                {
+                    CvInvoke.Rectangle(imgCopy, rect, new MCvScalar(0, 200, 0), 3);
+                    x = rect.X+8;
+                    y = rect.Y+2;
+                    h = rect.Height-10;                
+                    w = rect.Width-8;
+                    Rectangle rect2 = new Rectangle(x, y, w, h);
+                    imgplaka = imgCopy.Copy(rect2);
+                    picB_plaka.Image = imgplaka.Bitmap; //plaka gösteriliyor.
+
+                    //plaka gri yapma
+                    imgplakaGri = imgplaka.Convert<Gray, byte>();
+                    picB_plakagri.Image = imgplakaGri.Bitmap;  //gri plaka gösteriliyor
+                    //bulanıklaştırma
+                    imgplakaGri = imgplakaGri.SmoothBlur(1,3);
+                    //Blurlu plaka ekranda gösterme
+                    picB_blur.Image = imgplakaGri.Bitmap;
+                    //binarize işlemi
+                    imgplakaBin = new Image<Gray, byte>(imgplakaGri.Width, imgplakaGri.Height, new Gray(0));
+                    CvInvoke.Threshold(imgplakaGri, imgplakaBin, 80, 255, Emgu.CV.CvEnum.ThresholdType.Binary);
+                    //Binarize edilmiş plaka ekranda gösterme
+                    picB_thresh.Image = imgplakaBin.Bitmap;
+                    //okuma
+                    var ocr = new AutoOcr()
+                    {
+                        Language=IronOcr.Languages.Turkish.OcrLanguagePack,
+                    };
+                    okunan_plaka.Text = ocr.Read(imgplakaBin.Bitmap).ToString();
+
+                }
+            }
+        }
+    }
+}
+
